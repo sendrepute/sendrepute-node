@@ -8,7 +8,10 @@
   mode; advisory mode reports the unsupported content and preserves delivery
   without making a partial paid request.
 - Conservatively reject markup-bearing plain text and HTML normalization
-  controls so content in one MIME part cannot hide a later part.
+  controls, incomplete tags, nested attribute angles, and stray tag delimiters
+  so content in one MIME part cannot hide a later part.
+- Reject quoted-printable sequences, base64 transfer-encoding headers, and CSS
+  braces that API normalization could decode or suppress across boundaries.
 - Preserve the original message, recipients, attachments, and transport while
   using one adapter classification request for multipart inspection (normal
   configured client retries can still occur).

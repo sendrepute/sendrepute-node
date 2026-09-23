@@ -612,6 +612,124 @@ test("wrapper rejects split plain-text script delimiters without invoking transp
   ]);
 });
 
+test("plugin rejects incomplete HTML that could be completed by a later alternative", async () => {
+  let calls = 0;
+  const client = {
+    async request() {
+      calls += 1;
+      return response();
+    },
+  };
+  const mail = {
+    data: {
+      from: "Sender <s@example.test>",
+      subject: "Subject",
+      html: "<div style=\"display:none\"",
+      alternatives: [
+        { contentType: "text/html", content: ">URGENT winner wire funds</div>" },
+      ],
+    },
+  };
+
+  await assert.rejects(
+    runPlugin(createSendReputePlugin({ client, policy: blockPolicy }), mail),
+    (error) => error.code === "UNSUPPORTED_CONTENT",
+  );
+  await runPlugin(createSendReputePlugin({ client, policy: allowPolicy }), mail);
+  assert.equal(calls, 0);
+});
+
+test("wrapper rejects unmatched and nested HTML angles before transport", async () => {
+  const unsafeBodies = [
+    {
+      html: "<div",
+      alternatives: [{ contentType: "text/html", content: ">malicious</div>" }],
+    },
+    { html: "<a title=\"literal > angle\">malicious</a>" },
+    { html: "<p>malicious</p>>" },
+  ];
+  let calls = 0;
+  let sends = 0;
+  const client = {
+    async request() {
+      calls += 1;
+      return response();
+    },
+  };
+  const underlying = {
+    send(_mail, callback) {
+      sends += 1;
+      callback(null, { sent: true });
+    },
+  };
+
+  for (const displayed of unsafeBodies) {
+    await assert.rejects(
+      send(
+        createSendReputeTransport(underlying, { client, policy: blockPolicy }),
+        {
+          data: {
+            from: "Sender <s@example.test>",
+            subject: "Subject",
+            ...displayed,
+          },
+        },
+      ),
+      (error) => error.code === "UNSUPPORTED_CONTENT",
+    );
+  }
+  assert.equal(calls, 0);
+  assert.equal(sends, 0);
+});
+
+test("transfer encodings and CSS delimiters cannot reconstruct ignored content", async () => {
+  const unsafeParts = [
+    { text: "Benign =3Cscript=3E malicious =3C/script=3E" },
+    { text: "Benign soft break=\nmalicious continuation" },
+    {
+      text: "Content-Transfer-Encoding: base64\n\nPHNjcmlwdD5tYWxpY2lvdXM8L3NjcmlwdD4=",
+    },
+    { text: "Benign prefix {", html: "<p>malicious later part</p>" },
+    {
+      text: "Benign",
+      alternatives: [{ contentType: "text/html", content: "<p>malicious }</p>" }],
+    },
+  ];
+  let calls = 0;
+  const diagnostics = [];
+  const client = {
+    async request() {
+      calls += 1;
+      return response();
+    },
+  };
+
+  for (const displayed of unsafeParts) {
+    const mail = {
+      data: {
+        from: "Sender <s@example.test>",
+        subject: "Subject",
+        ...displayed,
+      },
+    };
+    await assert.rejects(
+      runPlugin(createSendReputePlugin({ client, policy: blockPolicy }), mail),
+      (error) => error.code === "UNSUPPORTED_CONTENT",
+    );
+    await runPlugin(
+      createSendReputePlugin({
+        client,
+        policy: allowPolicy,
+        onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+      }),
+      mail,
+    );
+  }
+  assert.equal(calls, 0);
+  assert.equal(diagnostics.length, unsafeParts.length);
+  assert.ok(diagnostics.every((diagnostic) => diagnostic.kind === "unsupported_content"));
+});
+
 test("invalid policy is rejected before a message can be sent", () => {
   assert.throws(
     () =>

@@ -166,6 +166,16 @@ function assertSafeDisplayFragment(
   content: string,
   mediaType: DisplayPart["mediaType"],
 ): void {
+  if (
+    /=[0-9a-f]{2}|=\r?\n/iu.test(content) ||
+    /content-transfer-encoding\s*:\s*base64/iu.test(content) ||
+    /[{}]/u.test(content)
+  ) {
+    throw new SendReputeNodemailerError(
+      "UNSUPPORTED_CONTENT",
+      "Display content contains transfer-encoding or CSS delimiters that cannot be safely bundled.",
+    );
+  }
   if (mediaType === "text/plain" && /[<>]/u.test(content)) {
     throw new SendReputeNodemailerError(
       "UNSUPPORTED_CONTENT",
@@ -173,6 +183,15 @@ function assertSafeDisplayFragment(
     );
   }
   if (mediaType !== "text/html") return;
+
+  const completeConservativeTag =
+    /<\/[a-z][\w:-]*\s*>|<[a-z][\w:-]*(?:\s+[a-z_:][\w:.-]*(?:\s*=\s*(?:"[^"<>]*"|'[^'<>]*'|[^\s"'`=<>]+))?)*\s*\/?>/giu;
+  if (/[<>]/u.test(content.replace(completeConservativeTag, ""))) {
+    throw new SendReputeNodemailerError(
+      "UNSUPPORTED_CONTENT",
+      "HTML display content contains an incomplete or malformed tag boundary.",
+    );
+  }
 
   const normalizationControl =
     /<!--|-->|<\s*\/?\s*(?:head|style|script|template|svg|xml|textarea|title|xmp|iframe|noembed|noframes|plaintext)\b/iu;

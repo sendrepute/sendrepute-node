@@ -208,7 +208,12 @@ analyze. To keep MIME-part boundaries inert under the API's HTML normalization,
 plain-text parts containing `<` or `>` and HTML parts containing comments,
 raw-text/non-content elements, or visibility-suppression constructs are also
 unsupported. This intentionally conservative rule prevents one part from
-hiding a later part during analysis.
+hiding a later part during analysis. Every angle bracket in supported HTML
+must belong to a complete, conservatively formed tag; incomplete tags, nested
+angle brackets in attributes, and stray angle delimiters are rejected.
+Quoted-printable escapes/soft breaks, base64 transfer-encoding headers, and
+literal CSS braces are rejected in every part because the API decodes or strips
+those constructs before extracting visible text.
 Advisory mode preserves delivery for unsupported content, emits an
 `unsupported_content` diagnostic, and makes no partial classification request.
 
