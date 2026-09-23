@@ -179,7 +179,9 @@ async function boundedBody(response: Response, signal: AbortSignal): Promise<str
   while (true) {
     const { done, value } = await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
       const aborted = () => {
-        void reader.cancel(signal.reason);
+        // Native fetch may already have errored the stream on abort. Consume
+        // cancel's rejection; the request still rejects with the signal reason.
+        void reader.cancel(signal.reason).catch(() => {});
         reject(signal.reason);
       };
       if (signal.aborted) return aborted();

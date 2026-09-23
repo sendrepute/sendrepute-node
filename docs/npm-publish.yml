@@ -1,0 +1,38 @@
+name: Publish Node SDK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10.28.0'
+      - name: Check release identity and OIDC-capable npm
+        run: |
+          node --input-type=module -e "import fs from 'node:fs'; const p=JSON.parse(fs.readFileSync('package.json')); if(p.name!=='@sendrepute/node'||p.version!=='0.1.1') throw new Error('This workflow only releases @sendrepute/node@0.1.1');"
+          npm --version
+      - name: Install build and test dependencies
+        run: pnpm install --no-frozen-lockfile
+      - name: Validate SDK and packed consumer
+        run: pnpm run validate
+      - name: Publish immutable release with provenance
+        run: npm publish --access public --provenance

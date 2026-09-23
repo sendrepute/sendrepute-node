@@ -159,7 +159,11 @@ test("a single total deadline bounds fetch, retries, and response body", async (
   );
 });
 
-test("deadline cancels a stalled response body", async () => {
+test("deadline cancels a stalled response body", async (t) => {
+  // AbortSignal.timeout is unreferenced. This synthetic stream has no socket to
+  // keep older Node test runners alive until the deadline fires.
+  const keepAlive = setTimeout(() => {}, 1000);
+  t.after(() => clearTimeout(keepAlive));
   let cancelled = false;
   const client = new SendReputeClient({
     apiKey: "key",

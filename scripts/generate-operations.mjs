@@ -15,7 +15,7 @@ const specText = await readFile(specPath, "utf8").catch((error) => {
 });
 if (specText === null) {
   const digest = createHash("sha256").update(await readFile(outputPath)).digest("hex");
-  if (digest !== "7185230766b2dabf8b9156dead117e8365861532559b0bfe91c731d77c14ff99") {
+  if (digest !== "d1ec1660a9c4d025b8a5673eb50dd236c9d77f859cd0d677855d441faacca52b") {
     throw new Error("Frozen v0.1.0 operation contract changed; review and update its checksum before release.");
   }
   console.log("Verified frozen v0.1.0 customer operation contract.");

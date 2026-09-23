@@ -38,6 +38,7 @@
     "typecheck:tests": "tsc --noEmit --strict --skipLibCheck --target ES2022 --module NodeNext --moduleResolution NodeNext ./test/types.test.ts",
     "typecheck:examples": "node ./scripts/typecheck-examples.mjs",
     "test": "node --test ./test/*.test.mjs",
+    "test:nodemailer-matrix": "node --test ./test/nodemailer-matrix.test.mjs",
     "test:pack": "node ./scripts/test-pack.mjs",
     "validate": "pnpm run generate:check && pnpm run build && pnpm run typecheck:tests && pnpm run test && pnpm run typecheck:examples && pnpm run test:pack"
   },
@@ -45,6 +46,10 @@
     "@types/node": "24.10.1",
     "@types/nodemailer": "^8.0.2",
     "nodemailer": "^10.0.10",
+    "nodemailer-6": "npm:nodemailer@6.10.1",
+    "nodemailer-7": "npm:nodemailer@7.0.13",
+    "nodemailer-8": "npm:nodemailer@8.0.11",
+    "nodemailer-9": "npm:nodemailer@9.1.1",
     "typescript": "~5.9.3"
   },
   "peerDependencies": {

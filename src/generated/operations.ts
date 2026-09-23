@@ -209,6 +209,7 @@ export type CustomerClassificationInput = {
   sender: string;
   subject: string;
   body: string;
+  displayedAlternatives?: Array<CustomerDisplayedAlternative>;
   model?: CustomerModelFamily;
 };
 
@@ -230,6 +231,11 @@ export type CustomerClassificationResult = {
   modelVersion: string;
   analyzedAt: string;
   contentAudit?: ContentAuditResult;
+};
+
+export type CustomerDisplayedAlternative = {
+  contentType: "text/plain" | "text/html";
+  body: string;
 };
 
 export type CustomerEmailBuilderAccessInput = {

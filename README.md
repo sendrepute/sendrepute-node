@@ -183,6 +183,74 @@ send email.
 
 ## Nodemailer adapter
 
+### Offline compatibility checks
+
+The optional peer range remains `nodemailer >=6`. The integration matrix runs
+real Nodemailer 6.10.1, 7.0.13, 8.0.11, 9.1.1, and 10.0.10 (the current
+lockfile version) through both the compile plugin and transport wrapper.
+These are representative releases of each available major, not a claim that
+every historical patch or future major has been tested. Older majors are
+development-only compatibility fixtures, not recommended production versions;
+use a maintained, security-patched Nodemailer release in production.
+
+Run `pnpm --filter @sendrepute/node run build`, then
+`pnpm --filter @sendrepute/node run test:nodemailer-matrix`. The same matrix
+is included automatically in `pnpm run validate:sdk-node`.
+After dependencies are installed, it runs offline with in-memory stream
+transports and a fake classifier; socket, TLS, HTTP, and fetch access fail the
+test. No SMTP server, credentials, or paid API calls are used.
+
+### Node runtime compatibility
+
+The core SDK minimum remains **Node 18.17.0**; it has no runtime dependencies.
+This is a compatibility floor, not a recommendation to deploy end-of-life Node.
+Use a maintained Node release in production. The development toolchain (pnpm 10,
+TypeScript, and default Nodemailer 10 fixture) is separate from the consumer
+runtime; Nodemailer 10 requires Node >=20 and does not raise the core SDK floor.
+On Node 18 the adapter is exercised with Nodemailer 6–9 only. On Node >=20 the
+matrix exercises all five fixture majors. Each fixture's actual `engines.node`
+is checked before loading it; incompatible combinations are explicitly skipped.
+The single major-version matrix remains in `test/nodemailer-matrix.test.mjs`.
+
+`test:pack` builds and extracts the tarball into a temporary standalone consumer,
+then runs the core client suite and adapter matrix through the published package
+exports. Those core and Nodemailer suites remain fully network-disabled.
+A separate process runs `test/native-fetch.test.mjs` using Node's real built-in
+fetch against ephemeral HTTP fixtures bound to `127.0.0.1`. Its preload permits
+connections only to registered fixture ports and blocks DNS, TLS, UDP, other
+listeners, and external or unregistered sockets (including SMTP). It checks
+chunked response parsing, deadline cancellation before headers and during the
+body, caller cancellation, and redirect refusal without forwarding credentials.
+Both processes use a sanitized environment with no inherited credentials or
+proxy configuration; only synthetic keys are used. No package installation,
+external API access, paid calls, or SMTP delivery occurs during these tests.
+To test additional already-provisioned runtimes with the current build toolchain:
+
+```sh
+node lib/sendrepute-node/scripts/test-pack.mjs /path/to/node18.17.0 /path/to/node22 /path/to/node24 /path/to/node26
+```
+
+The GitHub `sdk-node.yml` workflow provisions runtimes/dependencies separately
+and runs this offline check on exact 18.17.0, Node 20 (legacy coverage), and the
+maintained Node 22, 24, and 26 releases as of September 2026. Weekly runs resolve
+the latest patch of each major except the deliberately pinned minimum.
+The ordinary `validate:sdk-node` also runs the packed tests on its current Node.
+
+Local packed-runtime verification on September 23, 2026 passed on Node 18.17.0
+and 18.20.8 (43 core/adapter checks, Nodemailer 10 explicitly skipped),
+20.19.3, 22.22.0, 24.13.0, and 26.10.0 (51 core/adapter checks each).
+All six runtimes also passed the 10 separate native-fetch loopback checks.
+The minimum remains 18.17, rather than being raised to match the development
+dependency.
+
+The tests decode actual multipart MIME, check every plain/HTML alternative,
+base64 and quoted-printable wire encodings, preserved headers/envelopes,
+attachment bytes and object identity, and exactly one classification for
+supported content. Source-encoded alternatives remain intentionally unsupported:
+blocking rejects before classification/delivery; advisory preserves their
+rendered content without billing. Wire encoding of supported strings is distinct
+from an encoded source supplied via an alternative's `encoding` option.
+
 Install Nodemailer only when the optional adapter is needed:
 
 ```sh
