@@ -1,0 +1,64 @@
+{
+  "name": "@sendrepute/node",
+  "version": "0.1.0",
+  "description": "Typed, server-only Node.js SDK for the SendRepute customer API",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "browser": "./dist/browser.js",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./nodemailer": {
+      "browser": "./dist/browser.js",
+      "types": "./dist/nodemailer.d.ts",
+      "import": "./dist/nodemailer.js",
+      "default": "./dist/nodemailer.js"
+    }
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "generate": "node ./scripts/generate-operations.mjs",
+    "generate:check": "node ./scripts/generate-operations.mjs --check",
+    "build": "pnpm run generate:check && tsc -p tsconfig.json",
+    "prepack": "pnpm run build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:tests": "tsc --noEmit --strict --skipLibCheck --target ES2022 --module NodeNext --moduleResolution NodeNext ./test/types.test.ts",
+    "typecheck:examples": "node ./scripts/typecheck-examples.mjs",
+    "test": "node --test ./test/*.test.mjs",
+    "test:pack": "node ./scripts/test-pack.mjs",
+    "validate": "pnpm run generate:check && pnpm run build && pnpm run typecheck:tests && pnpm run test && pnpm run typecheck:examples && pnpm run test:pack"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "@types/nodemailer": "^8.0.2",
+    "nodemailer": "^10.0.10",
+    "typescript": "~5.9.3"
+  },
+  "peerDependencies": {
+    "nodemailer": ">=6"
+  },
+  "peerDependenciesMeta": {
+    "nodemailer": {
+      "optional": true
+    }
+  },
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/sendrepute/sendrepute-node.git" },
+  "homepage": "https://www.sendrepute.com",
+  "bugs": { "url": "https://github.com/sendrepute/sendrepute-node/issues" },
+  "publishConfig": {
+    "access": "public"
+  }
+}
