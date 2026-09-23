@@ -473,8 +473,10 @@ test("empty display parts and dangerous HTML fragments are unsupported", async (
     { html: "" },
     { text: "Benign", alternatives: [{ contentType: "text/plain", content: "" }] },
     { html: "<p>Visible</p><!-- unclosed" },
-    { html: "<style>.safe { color: green }</style><p>Balanced</p><style>" },
+    { html: "<style>.safe { color: green }</style><p>Balanced</p>" },
     { html: "<plaintext>later MIME parts would be swallowed" },
+    { html: "<p>Visible</p></script-not-real>" },
+    { html: "<div style=\"display:none\">concealed</div>" },
   ];
   let calls = 0;
   const client = {
@@ -501,13 +503,13 @@ test("empty display parts and dangerous HTML fragments are unsupported", async (
   assert.equal(calls, 0);
 });
 
-test("balanced HTML comments and raw-text elements remain analyzable", async () => {
+test("ordinary HTML without normalization controls remains analyzable", async () => {
   const calls = [];
   const mail = {
     data: {
       from: "Sender <s@example.test>",
       subject: "Subject",
-      html: "<style>.notice { color: green }</style><!-- note --><p class=\"notice\">Hello</p>",
+      html: "<p class=\"notice\"><strong>Hello</strong></p>",
     },
   };
   await runPlugin(
@@ -524,6 +526,90 @@ test("balanced HTML comments and raw-text elements remain analyzable", async () 
   );
   assert.equal(calls.length, 1);
   assert.equal(calls[0][1].body.body, mail.data.html);
+});
+
+test("plugin rejects split plain-text comment delimiters before a later HTML alternative", async () => {
+  let calls = 0;
+  const diagnostics = [];
+  const client = {
+    async request() {
+      calls += 1;
+      return response();
+    },
+  };
+  const mail = {
+    data: {
+      from: "Sender <s@example.test>",
+      subject: "Subject",
+      text: "Benign summary <!--",
+      html: "--><strong>URGENT winner wire funds</strong>",
+    },
+  };
+
+  await assert.rejects(
+    runPlugin(createSendReputePlugin({ client, policy: blockPolicy }), mail),
+    (error) => error.code === "UNSUPPORTED_CONTENT",
+  );
+  await runPlugin(
+    createSendReputePlugin({
+      client,
+      policy: allowPolicy,
+      onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+    }),
+    mail,
+  );
+  assert.equal(calls, 0);
+  assert.deepEqual(diagnostics, [
+    { kind: "unsupported_content", action: "allowed", code: "UNSUPPORTED_CONTENT" },
+  ]);
+});
+
+test("wrapper rejects split plain-text script delimiters without invoking transport", async () => {
+  let calls = 0;
+  let sends = 0;
+  const diagnostics = [];
+  const client = {
+    async request() {
+      calls += 1;
+      return response();
+    },
+  };
+  const underlying = {
+    send(_mail, callback) {
+      sends += 1;
+      callback(null, { sent: true });
+    },
+  };
+  const mail = {
+    data: {
+      from: "Sender <s@example.test>",
+      subject: "Subject",
+      text: "Routine update <script>",
+      alternatives: [
+        { contentType: "text/html", content: "</script><p>URGENT winner wire funds</p>" },
+      ],
+    },
+  };
+
+  await assert.rejects(
+    send(createSendReputeTransport(underlying, { client, policy: blockPolicy }), mail),
+    (error) => error.code === "UNSUPPORTED_CONTENT",
+  );
+  assert.equal(sends, 0);
+
+  await send(
+    createSendReputeTransport(underlying, {
+      client,
+      policy: allowPolicy,
+      onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+    }),
+    mail,
+  );
+  assert.equal(calls, 0);
+  assert.equal(sends, 1);
+  assert.deepEqual(diagnostics, [
+    { kind: "unsupported_content", action: "allowed", code: "UNSUPPORTED_CONTENT" },
+  ]);
 });
 
 test("invalid policy is rejected before a message can be sent", () => {

@@ -204,8 +204,11 @@ Normal client retry settings still apply to that request. Blocking mode rejects
 raw, stream/path/URL-backed, encoded, oversized, malformed, or non-plain/HTML
 alternative content, as well as unsupported top-level AMP, watch HTML, and
 calendar bodies, because the adapter cannot safely approve what it did not
-analyze. It also rejects HTML fragments with unbalanced comments or raw-text
-elements so one fragment cannot hide a later MIME part during analysis.
+analyze. To keep MIME-part boundaries inert under the API's HTML normalization,
+plain-text parts containing `<` or `>` and HTML parts containing comments,
+raw-text/non-content elements, or visibility-suppression constructs are also
+unsupported. This intentionally conservative rule prevents one part from
+hiding a later part during analysis.
 Advisory mode preserves delivery for unsupported content, emits an
 `unsupported_content` diagnostic, and makes no partial classification request.
 

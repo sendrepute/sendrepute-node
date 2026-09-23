@@ -162,50 +162,26 @@ function requireDisplayContent(value: unknown, field: string): string {
   );
 }
 
-function assertSafeHtmlFragment(content: string): void {
-  let commentEnd = 0;
-  for (;;) {
-    const open = content.indexOf("<!--", commentEnd);
-    const close = content.indexOf("-->", commentEnd);
-    if (open === -1 && close === -1) break;
-    if (open === -1 || (close !== -1 && close < open)) {
-      throw new SendReputeNodemailerError(
-        "UNSUPPORTED_CONTENT",
-        "HTML display content contains an unbalanced comment.",
-      );
-    }
-    const matchingClose = content.indexOf("-->", open + 4);
-    if (matchingClose === -1) {
-      throw new SendReputeNodemailerError(
-        "UNSUPPORTED_CONTENT",
-        "HTML display content contains an unbalanced comment.",
-      );
-    }
-    commentEnd = matchingClose + 3;
-  }
-
-  const rawTextElement = /<(\/?)(style|script|textarea|title|xmp|iframe|noembed|noframes)\b[^>]*>/giu;
-  const depths = new Map<string, number>();
-  for (const match of content.matchAll(rawTextElement)) {
-    const closing = match[1] === "/";
-    const tag = match[2]!.toLowerCase();
-    const depth = depths.get(tag) ?? 0;
-    if (closing) {
-      if (depth === 0) {
-        throw new SendReputeNodemailerError(
-          "UNSUPPORTED_CONTENT",
-          `HTML display content contains an unbalanced ${tag} element.`,
-        );
-      }
-      depths.set(tag, depth - 1);
-    } else {
-      depths.set(tag, depth + 1);
-    }
-  }
-  if (/<plaintext\b/iu.test(content) || [...depths.values()].some((depth) => depth !== 0)) {
+function assertSafeDisplayFragment(
+  content: string,
+  mediaType: DisplayPart["mediaType"],
+): void {
+  if (mediaType === "text/plain" && /[<>]/u.test(content)) {
     throw new SendReputeNodemailerError(
       "UNSUPPORTED_CONTENT",
-      "HTML display content contains an unbalanced raw-text element.",
+      "Plain-text display content containing markup delimiters cannot be safely bundled.",
+    );
+  }
+  if (mediaType !== "text/html") return;
+
+  const normalizationControl =
+    /<!--|-->|<\s*\/?\s*(?:head|style|script|template|svg|xml|textarea|title|xmp|iframe|noembed|noframes|plaintext)\b/iu;
+  const visibilityControl =
+    /<[a-z][^>]*(?:\b(?:hidden|aria-hidden)\b|(?:display|visibility|mso-hide)\s*:\s*(?:none|hidden|all)\b|(?:font-size|max-height)\s*:\s*0(?:px|pt|em|rem|%)?\b)[^>]*>/iu;
+  if (normalizationControl.test(content) || visibilityControl.test(content)) {
+    throw new SendReputeNodemailerError(
+      "UNSUPPORTED_CONTENT",
+      "HTML display content contains constructs that cannot be safely isolated during classification.",
     );
   }
 }
@@ -216,7 +192,7 @@ function displayPart(
   mediaType: DisplayPart["mediaType"],
 ): DisplayPart {
   const content = requireDisplayContent(value, field);
-  if (mediaType === "text/html") assertSafeHtmlFragment(content);
+  assertSafeDisplayFragment(content, mediaType);
   return { mediaType, content };
 }
 
