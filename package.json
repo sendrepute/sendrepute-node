@@ -1,6 +1,6 @@
 {
   "name": "@sendrepute/node",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Typed, server-only Node.js SDK for the SendRepute customer API",
   "type": "module",
   "main": "./dist/index.js",
@@ -8,6 +8,7 @@
   "files": [
     "dist",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "exports": {

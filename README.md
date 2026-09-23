@@ -16,7 +16,7 @@ Install the published package (the Nodemailer adapter is included in this same
 package, not a separate npm publication):
 
 ```sh
-npm install @sendrepute/node@0.1.0
+npm install @sendrepute/node@0.1.1
 # Optional transport dependency:
 npm install nodemailer
 ```
@@ -196,6 +196,18 @@ the transport rather than replacing delivery.
 - **Advisory mode** reports a diagnostic and allows transport delivery.
 - **Blocking mode** stops the transport when the configured policy rejects the
   message.
+
+When a message has both plain-text and HTML bodies, or additional Nodemailer
+`alternatives`, every displayed `text/plain` and `text/html` body is bundled
+into one bounded adapter request, rather than one request per alternative.
+Normal client retry settings still apply to that request. Blocking mode rejects
+raw, stream/path/URL-backed, encoded, oversized, malformed, or non-plain/HTML
+alternative content, as well as unsupported top-level AMP, watch HTML, and
+calendar bodies, because the adapter cannot safely approve what it did not
+analyze. It also rejects HTML fragments with unbalanced comments or raw-text
+elements so one fragment cannot hide a later MIME part during analysis.
+Advisory mode preserves delivery for unsupported content, emits an
+`unsupported_content` diagnostic, and makes no partial classification request.
 
 The adapter sends message content needed for classification—including the
 rendered body—to the SendRepute API. Treat that as a privacy boundary: disclose

@@ -74,6 +74,7 @@ export async function renderAuditedMessageWithoutSending(options: {
     cc: "archive@example.test",
     subject: "Your requested account summary",
     text: "Here is the account summary you requested.",
+    html: "<p>Here is the account summary you requested.</p>",
     attachments: [
       {
         filename: "summary.txt",
@@ -88,8 +89,11 @@ export async function renderAuditedMessageWithoutSending(options: {
   return result;
 }
 
-// Classification sends the selected in-memory text/HTML body to SendRepute
-// and is a paid API operation. This file deliberately does not invoke the
+// Classification sends every displayed in-memory text/HTML body together in
+// one bounded adapter request (subject to the client's normal retry policy).
+// Unsupported content blocks only under a
+// blocking policy; advisory mode reports it and preserves delivery without a
+// partial paid request. This file deliberately does not invoke the
 // function automatically. Advisory mode allows delivery after diagnostics;
 // blocking mode prevents transport at/above the threshold. Production code
 // can replace streamTransport with its existing SMTP/provider transport.

@@ -13,6 +13,12 @@ const allowPolicy = {
   onApiFailure: "allow",
 };
 
+const blockPolicy = {
+  mode: "blocking",
+  spamProbabilityThreshold: 0.7,
+  onApiFailure: "allow",
+};
+
 function response(spamProbability = 0.1) {
   return {
     requestId: "req-safe",
@@ -115,6 +121,120 @@ test("wrapper preserves transport and mail identity", async () => {
   assert.equal(received, mail);
 });
 
+test("plugin classifies benign text and malicious HTML together in one adapter request", async () => {
+  const calls = [];
+  const client = {
+    async request(...args) {
+      calls.push(args);
+      const body = args[1].body.body;
+      assert.match(body, /Routine account update/);
+      assert.match(body, /URGENT winner wire funds/);
+      assert.match(body, /content-type=text\/plain/);
+      assert.match(body, /content-type=text\/html/);
+      return response(0.95);
+    },
+  };
+  const mail = {
+    data: {
+      from: "Sender <s@example.test>",
+      subject: "Subject",
+      text: "Routine account update",
+      html: "<strong>URGENT winner wire funds</strong>",
+    },
+  };
+
+  await assert.rejects(
+    runPlugin(createSendReputePlugin({ client, policy: blockPolicy }), mail),
+    (error) => error.code === "SPAM_BLOCKED",
+  );
+  assert.equal(calls.length, 1);
+});
+
+test("wrapper combines top-level and alternative bodies once and preserves delivery data", async () => {
+  const calls = [];
+  let received;
+  const underlying = {
+    send(mail, callback) {
+      received = mail;
+      callback(null, { accepted: mail.data.to });
+    },
+  };
+  const client = {
+    async request(...args) {
+      calls.push(args);
+      return response();
+    },
+  };
+  const attachment = { filename: "report.txt", content: "private attachment" };
+  const recipients = ["one@example.test", "two@example.test"];
+  const mail = {
+    data: {
+      from: "Sender <s@example.test>",
+      to: recipients,
+      subject: "Subject",
+      text: "Primary plain body",
+      html: "<p>Primary HTML body</p>",
+      alternatives: [
+        { contentType: "text/plain; charset=utf-8", content: "Accessible plain alternative" },
+        { contentType: "text/html", content: "<p>Rich HTML alternative</p>" },
+      ],
+      attachments: [attachment],
+    },
+  };
+
+  await send(createSendReputeTransport(underlying, { client, policy: allowPolicy }), mail);
+
+  assert.equal(calls.length, 1);
+  const body = calls[0][1].body.body;
+  for (const expected of [
+    "Primary plain body",
+    "<p>Primary HTML body</p>",
+    "Accessible plain alternative",
+    "<p>Rich HTML alternative</p>",
+  ]) {
+    assert.match(body, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  assert.equal(received, mail);
+  assert.equal(received.data.to, recipients);
+  assert.equal(received.data.attachments[0], attachment);
+});
+
+test("combined displayed content is bounded before classification", async () => {
+  let calls = 0;
+  const diagnostics = [];
+  const mail = {
+    data: {
+      from: "Sender <s@example.test>",
+      subject: "Subject",
+      text: "a".repeat(300_000),
+      html: "b".repeat(224_289),
+    },
+  };
+  const client = {
+    async request() {
+      calls += 1;
+      return response();
+    },
+  };
+
+  await assert.rejects(
+    runPlugin(createSendReputePlugin({ client, policy: blockPolicy }), mail),
+    (error) => error.code === "UNSUPPORTED_CONTENT",
+  );
+  await runPlugin(
+    createSendReputePlugin({
+      client,
+      policy: allowPolicy,
+      onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+    }),
+    mail,
+  );
+  assert.equal(calls, 0);
+  assert.deepEqual(diagnostics, [
+    { kind: "unsupported_content", action: "allowed", code: "UNSUPPORTED_CONTENT" },
+  ]);
+});
+
 test("advisory and blocking policies make threshold behavior explicit", async () => {
   const diagnostics = [];
   const client = { request: async () => response(0.9) };
@@ -189,27 +309,28 @@ test("API failure policy allows or blocks with content-safe diagnostics", async 
   );
 });
 
-test("raw and stream-backed message content are rejected without reading", async () => {
+test("unsupported content blocks blocking policy but advisory policy allows without billing", async () => {
   let calls = 0;
   let reads = 0;
+  const client = {
+    request: async () => {
+      calls += 1;
+      return response();
+    },
+  };
   const stream = {
     get pipe() {
       reads += 1;
       throw new Error("must not read");
     },
   };
-  const plugin = createSendReputePlugin({
-    client: {
-      request: async () => {
-        calls += 1;
-        return response();
-      },
-    },
-    policy: allowPolicy,
+  const blockingPlugin = createSendReputePlugin({
+    client,
+    policy: blockPolicy,
   });
 
   await assert.rejects(
-    runPlugin(plugin, {
+    runPlugin(blockingPlugin, {
       data: {
         from: "Sender <s@example.test>",
         subject: "Subject",
@@ -219,7 +340,7 @@ test("raw and stream-backed message content are rejected without reading", async
     (error) => error.code === "UNSUPPORTED_CONTENT",
   );
   await assert.rejects(
-    runPlugin(plugin, {
+    runPlugin(blockingPlugin, {
       data: {
         from: "Sender <s@example.test>",
         subject: "Subject",
@@ -228,8 +349,181 @@ test("raw and stream-backed message content are rejected without reading", async
     }),
     (error) => error.code === "UNSUPPORTED_CONTENT",
   );
+  await assert.rejects(
+    runPlugin(blockingPlugin, {
+      data: {
+        from: "Sender <s@example.test>",
+        subject: "Subject",
+        text: "Safe primary body",
+        alternatives: [{ contentType: "text/html", content: stream }],
+      },
+    }),
+    (error) => error.code === "UNSUPPORTED_CONTENT",
+  );
+
+  const diagnostics = [];
+  await runPlugin(
+    createSendReputePlugin({
+      client,
+      policy: allowPolicy,
+      onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+    }),
+    {
+      data: {
+        from: "Sender <s@example.test>",
+        subject: "Subject",
+        text: "Safe primary body",
+        alternatives: [{ contentType: "text/calendar", content: "BEGIN:VCALENDAR" }],
+      },
+    },
+  );
   assert.equal(calls, 0);
   assert.equal(reads, 0);
+  assert.deepEqual(diagnostics, [
+    { kind: "unsupported_content", action: "allowed", code: "UNSUPPORTED_CONTENT" },
+  ]);
+});
+
+test("unsupported top-level displayed MIME fields block or advisory-skip consistently", async () => {
+  for (const field of ["amp", "watchHtml", "icalEvent"]) {
+    let calls = 0;
+    const client = {
+      async request() {
+        calls += 1;
+        return response();
+      },
+    };
+    const mail = {
+      data: {
+        from: "Sender <s@example.test>",
+        subject: "Subject",
+        text: "Benign plain text",
+        [field]: field === "icalEvent" ? { content: "BEGIN:VCALENDAR" } : "<p>Displayed body</p>",
+      },
+    };
+
+    await assert.rejects(
+      runPlugin(createSendReputePlugin({ client, policy: blockPolicy }), mail),
+      (error) => error.code === "UNSUPPORTED_CONTENT",
+      `${field} must fail closed`,
+    );
+    const diagnostics = [];
+    await runPlugin(
+      createSendReputePlugin({
+        client,
+        policy: allowPolicy,
+        onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+      }),
+      mail,
+    );
+    assert.equal(calls, 0);
+    assert.deepEqual(diagnostics, [
+      { kind: "unsupported_content", action: "allowed", code: "UNSUPPORTED_CONTENT" },
+    ]);
+  }
+});
+
+test("alternative raw, path, href, and encoding sources cannot hide displayed content", async () => {
+  const unsupportedAlternatives = [
+    { contentType: "text/html", content: "<p>Benign</p>", raw: "Content-Type: text/html" },
+    { contentType: "text/html", content: "<p>Benign</p>", path: "./different.html" },
+    { contentType: "text/html", content: "<p>Benign</p>", href: "https://example.test/different.html" },
+    {
+      contentType: "text/html",
+      content: "PHN0cm9uZz5XaW5uZXI8L3N0cm9uZz4=",
+      encoding: "base64",
+    },
+  ];
+  let calls = 0;
+  const client = {
+    async request() {
+      calls += 1;
+      return response();
+    },
+  };
+
+  for (const alternative of unsupportedAlternatives) {
+    const mail = {
+      data: {
+        from: "Sender <s@example.test>",
+        subject: "Subject",
+        text: "Benign plain text",
+        alternatives: [alternative],
+        attachments: [{ filename: "kept.txt", content: "attachment is unrelated" }],
+      },
+    };
+    await assert.rejects(
+      send(
+        createSendReputeTransport(
+          { send: (_mail, callback) => callback(null, { sent: true }) },
+          { client, policy: blockPolicy },
+        ),
+        mail,
+      ),
+      (error) => error.code === "UNSUPPORTED_CONTENT",
+    );
+    await runPlugin(createSendReputePlugin({ client, policy: allowPolicy }), mail);
+  }
+  assert.equal(calls, 0);
+});
+
+test("empty display parts and dangerous HTML fragments are unsupported", async () => {
+  const cases = [
+    { text: "" },
+    { html: "" },
+    { text: "Benign", alternatives: [{ contentType: "text/plain", content: "" }] },
+    { html: "<p>Visible</p><!-- unclosed" },
+    { html: "<style>.safe { color: green }</style><p>Balanced</p><style>" },
+    { html: "<plaintext>later MIME parts would be swallowed" },
+  ];
+  let calls = 0;
+  const client = {
+    async request() {
+      calls += 1;
+      return response();
+    },
+  };
+
+  for (const displayed of cases) {
+    const mail = {
+      data: {
+        from: "Sender <s@example.test>",
+        subject: "Subject",
+        ...displayed,
+      },
+    };
+    await assert.rejects(
+      runPlugin(createSendReputePlugin({ client, policy: blockPolicy }), mail),
+      (error) => error.code === "UNSUPPORTED_CONTENT",
+    );
+    await runPlugin(createSendReputePlugin({ client, policy: allowPolicy }), mail);
+  }
+  assert.equal(calls, 0);
+});
+
+test("balanced HTML comments and raw-text elements remain analyzable", async () => {
+  const calls = [];
+  const mail = {
+    data: {
+      from: "Sender <s@example.test>",
+      subject: "Subject",
+      html: "<style>.notice { color: green }</style><!-- note --><p class=\"notice\">Hello</p>",
+    },
+  };
+  await runPlugin(
+    createSendReputePlugin({
+      client: {
+        async request(...args) {
+          calls.push(args);
+          return response();
+        },
+      },
+      policy: blockPolicy,
+    }),
+    mail,
+  );
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][1].body.body, mail.data.html);
 });
 
 test("invalid policy is rejected before a message can be sent", () => {

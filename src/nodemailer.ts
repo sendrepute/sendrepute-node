@@ -22,6 +22,11 @@ export type SendReputeNodemailerDiagnostic =
       errorName: string;
       status?: number;
       code?: string;
+    }
+  | {
+      kind: "unsupported_content";
+      action: "allowed" | "blocked";
+      code: "UNSUPPORTED_CONTENT";
     };
 
 export type SendReputeNodemailerOptions = {
@@ -38,7 +43,11 @@ export type NodemailerMessageData = {
   subject?: unknown;
   text?: unknown;
   html?: unknown;
+  amp?: unknown;
+  watchHtml?: unknown;
+  icalEvent?: unknown;
   raw?: unknown;
+  alternatives?: unknown;
   attachments?: unknown;
   envelope?: unknown;
 };
@@ -84,6 +93,14 @@ type Classification = {
     spamProbability: number;
     confidence?: "low" | "medium" | "high";
   };
+};
+
+const MAX_CLASSIFICATION_BODY_BYTES = 524_288;
+const encoder = new TextEncoder();
+
+type DisplayPart = {
+  mediaType: "text/plain" | "text/html";
+  content: string;
 };
 
 function validateOptions(options: SendReputeNodemailerOptions): void {
@@ -137,6 +154,183 @@ function requireStringField(
   );
 }
 
+function requireDisplayContent(value: unknown, field: string): string {
+  if (typeof value === "string" && value.length > 0) return value;
+  throw new SendReputeNodemailerError(
+    "UNSUPPORTED_CONTENT",
+    `Nodemailer ${field} must be non-empty in-memory string content.`,
+  );
+}
+
+function assertSafeHtmlFragment(content: string): void {
+  let commentEnd = 0;
+  for (;;) {
+    const open = content.indexOf("<!--", commentEnd);
+    const close = content.indexOf("-->", commentEnd);
+    if (open === -1 && close === -1) break;
+    if (open === -1 || (close !== -1 && close < open)) {
+      throw new SendReputeNodemailerError(
+        "UNSUPPORTED_CONTENT",
+        "HTML display content contains an unbalanced comment.",
+      );
+    }
+    const matchingClose = content.indexOf("-->", open + 4);
+    if (matchingClose === -1) {
+      throw new SendReputeNodemailerError(
+        "UNSUPPORTED_CONTENT",
+        "HTML display content contains an unbalanced comment.",
+      );
+    }
+    commentEnd = matchingClose + 3;
+  }
+
+  const rawTextElement = /<(\/?)(style|script|textarea|title|xmp|iframe|noembed|noframes)\b[^>]*>/giu;
+  const depths = new Map<string, number>();
+  for (const match of content.matchAll(rawTextElement)) {
+    const closing = match[1] === "/";
+    const tag = match[2]!.toLowerCase();
+    const depth = depths.get(tag) ?? 0;
+    if (closing) {
+      if (depth === 0) {
+        throw new SendReputeNodemailerError(
+          "UNSUPPORTED_CONTENT",
+          `HTML display content contains an unbalanced ${tag} element.`,
+        );
+      }
+      depths.set(tag, depth - 1);
+    } else {
+      depths.set(tag, depth + 1);
+    }
+  }
+  if (/<plaintext\b/iu.test(content) || [...depths.values()].some((depth) => depth !== 0)) {
+    throw new SendReputeNodemailerError(
+      "UNSUPPORTED_CONTENT",
+      "HTML display content contains an unbalanced raw-text element.",
+    );
+  }
+}
+
+function displayPart(
+  value: unknown,
+  field: string,
+  mediaType: DisplayPart["mediaType"],
+): DisplayPart {
+  const content = requireDisplayContent(value, field);
+  if (mediaType === "text/html") assertSafeHtmlFragment(content);
+  return { mediaType, content };
+}
+
+function displayParts(message: NodemailerMessageData): DisplayPart[] {
+  for (const field of ["amp", "watchHtml", "icalEvent"] as const) {
+    if (message[field] !== undefined && message[field] !== null) {
+      throw new SendReputeNodemailerError(
+        "UNSUPPORTED_CONTENT",
+        `Nodemailer ${field} displayed content is not supported for classification.`,
+      );
+    }
+  }
+  const parts: DisplayPart[] = [];
+  if (message.text !== undefined && message.text !== null) {
+    parts.push(displayPart(message.text, "text", "text/plain"));
+  }
+  if (message.html !== undefined && message.html !== null) {
+    parts.push(displayPart(message.html, "html", "text/html"));
+  }
+
+  if (message.alternatives !== undefined && message.alternatives !== null) {
+    if (!Array.isArray(message.alternatives)) {
+      throw new SendReputeNodemailerError(
+        "UNSUPPORTED_CONTENT",
+        "Nodemailer alternatives must be an array of in-memory text/plain or text/html content.",
+      );
+    }
+    for (const alternative of message.alternatives) {
+      if (!alternative || typeof alternative !== "object" || Array.isArray(alternative)) {
+        throw new SendReputeNodemailerError(
+          "UNSUPPORTED_CONTENT",
+          "Each Nodemailer alternative must be an in-memory text/plain or text/html object.",
+        );
+      }
+      const candidate = alternative as {
+        content?: unknown;
+        contentType?: unknown;
+        encoding?: unknown;
+        raw?: unknown;
+        path?: unknown;
+        href?: unknown;
+      };
+      if (
+        candidate.encoding !== undefined ||
+        candidate.raw !== undefined ||
+        candidate.path !== undefined ||
+        candidate.href !== undefined
+      ) {
+        throw new SendReputeNodemailerError(
+          "UNSUPPORTED_CONTENT",
+          "Encoded, raw, path-backed, and URL-backed Nodemailer alternatives are not supported.",
+        );
+      }
+      if (typeof candidate.contentType !== "string") {
+        throw new SendReputeNodemailerError(
+          "UNSUPPORTED_CONTENT",
+          "Each Nodemailer alternative must declare text/plain or text/html contentType.",
+        );
+      }
+      const mediaType = candidate.contentType.split(";", 1)[0]?.trim().toLowerCase();
+      if (mediaType !== "text/plain" && mediaType !== "text/html") {
+        throw new SendReputeNodemailerError(
+          "UNSUPPORTED_CONTENT",
+          "Only text/plain and text/html Nodemailer alternatives can be analyzed.",
+        );
+      }
+      parts.push(displayPart(candidate.content, "alternative content", mediaType));
+    }
+  }
+  return parts;
+}
+
+function combinedBody(parts: DisplayPart[]): string {
+  if (parts.length === 0) {
+    throw new SendReputeNodemailerError(
+      "INVALID_MESSAGE",
+      "A non-empty in-memory text or HTML body is required for classification.",
+    );
+  }
+  if (parts.length === 1) {
+    const body = parts[0]!.content;
+    if (encoder.encode(body).byteLength <= MAX_CLASSIFICATION_BODY_BYTES) return body;
+    throw new SendReputeNodemailerError(
+      "UNSUPPORTED_CONTENT",
+      `Combined displayed content exceeds the ${MAX_CLASSIFICATION_BODY_BYTES}-byte classification limit.`,
+    );
+  }
+
+  const chunks = ["SendRepute displayed-content bundle v1"];
+  let totalBytes = encoder.encode(chunks[0]).byteLength;
+  for (const [index, part] of parts.entries()) {
+    const contentBytes = encoder.encode(part.content).byteLength;
+    const header = `\n-- part ${index + 1}; content-type=${part.mediaType}; utf8-bytes=${contentBytes}\n`;
+    totalBytes += encoder.encode(header).byteLength + contentBytes;
+    if (totalBytes > MAX_CLASSIFICATION_BODY_BYTES) {
+      throw new SendReputeNodemailerError(
+        "UNSUPPORTED_CONTENT",
+        `Combined displayed content exceeds the ${MAX_CLASSIFICATION_BODY_BYTES}-byte classification limit.`,
+      );
+    }
+    chunks.push(header, part.content);
+  }
+  const footer = "\n-- end displayed-content bundle --";
+  totalBytes += encoder.encode(footer).byteLength;
+  if (totalBytes > MAX_CLASSIFICATION_BODY_BYTES) {
+    throw new SendReputeNodemailerError(
+      "UNSUPPORTED_CONTENT",
+      `Combined displayed content exceeds the ${MAX_CLASSIFICATION_BODY_BYTES}-byte classification limit.`,
+    );
+  }
+  chunks.push(footer);
+  return chunks.join("");
+}
+
 function classificationInput(
   message: NodemailerMessageData,
   options: SendReputeNodemailerOptions,
@@ -160,17 +354,7 @@ function classificationInput(
   }
 
   const subject = requireStringField(message.subject, "subject");
-  let body: string;
-  if (message.text !== undefined && message.text !== null) {
-    body = requireStringField(message.text, "text");
-  } else if (message.html !== undefined && message.html !== null) {
-    body = requireStringField(message.html, "html");
-  } else {
-    throw new SendReputeNodemailerError(
-      "INVALID_MESSAGE",
-      "A non-empty in-memory text or HTML body is required for classification.",
-    );
-  }
+  const body = combinedBody(displayParts(message));
 
   const input = { sender: sender.trim(), subject, body };
   return options.model === undefined ? input : { ...input, model: options.model };
@@ -223,7 +407,24 @@ async function inspect(
   message: NodemailerMessageData,
   options: SendReputeNodemailerOptions,
 ): Promise<void> {
-  const input = classificationInput(message, options);
+  let input: ReturnType<typeof classificationInput>;
+  try {
+    input = classificationInput(message, options);
+  } catch (error) {
+    if (
+      error instanceof SendReputeNodemailerError &&
+      error.code === "UNSUPPORTED_CONTENT"
+    ) {
+      const blocked = options.policy.mode === "blocking";
+      report(options, {
+        kind: "unsupported_content",
+        action: blocked ? "blocked" : "allowed",
+        code: "UNSUPPORTED_CONTENT",
+      });
+      if (!blocked) return;
+    }
+    throw error;
+  }
   let classification: Classification;
   try {
     const requestOptions = options.signal === undefined ? {} : { signal: options.signal };
