@@ -41,6 +41,15 @@ function reportDiagnostic(diagnostic: SendReputeNodemailerDiagnostic): void {
 
 export async function renderAuditedMessageWithoutSending(options: {
   mode: "advisory" | "blocking";
+  priceAuthorization: {
+    expectedPricing: {
+      classificationBaseMillicents: number;
+      includedUniqueTerms: number;
+      additionalTermMillicents: number;
+      maximumClassificationMillicents: number;
+    };
+    maxChargeMillicents: number;
+  };
   signal?: AbortSignal;
 }) {
   // streamTransport is a real Nodemailer transport that renders the complete
@@ -56,10 +65,15 @@ export async function renderAuditedMessageWithoutSending(options: {
     createSendReputePlugin({
       client,
       policy: {
+        paidAnalysisConsent: true,
         mode: options.mode,
         spamProbabilityThreshold: 0.85,
         onApiFailure: options.mode === "blocking" ? "block" : "allow",
       },
+      // Populate this only after displaying GET /v1/pricing and receiving
+      // deliberate consent. PRICE_CHANGED always blocks; obtain fresh consent
+      // rather than automatically increasing this authorization.
+      priceAuthorization: options.priceAuthorization,
       signal: options.signal,
       onDiagnostic: reportDiagnostic,
     }),

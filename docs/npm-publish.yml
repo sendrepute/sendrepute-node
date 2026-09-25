@@ -28,7 +28,7 @@ jobs:
           version: '10.28.0'
       - name: Check release identity and OIDC-capable npm
         run: |
-          node --input-type=module -e "import fs from 'node:fs'; const p=JSON.parse(fs.readFileSync('package.json')); if(p.name!=='@sendrepute/node'||p.version!=='0.1.1') throw new Error('This workflow only releases @sendrepute/node@0.1.1');"
+          node --input-type=module -e "import fs from 'node:fs'; const p=JSON.parse(fs.readFileSync('package.json')); if(p.name!=='@sendrepute/node'||p.version!=='0.1.2') throw new Error('This workflow only releases @sendrepute/node@0.1.2');"
           npm --version
       - name: Install build and test dependencies
         run: pnpm install --no-frozen-lockfile

@@ -16,7 +16,7 @@ Install the published package (the Nodemailer adapter is included in this same
 package, not a separate npm publication):
 
 ```sh
-npm install @sendrepute/node@0.1.1
+npm install @sendrepute/node@0.1.2
 # Optional transport dependency:
 npm install nodemailer
 ```
@@ -152,8 +152,11 @@ internal details.
 Account/catalog reads and stateless standard builder processing do not create
 AI or VIP purchases. Classification is paid. AI generation and native VIP
 builder access are separately priced paid operations. Read current pricing
-first, show it to the user, and submit the exact `expectedPriceMillicents` only
-after explicit confirmation.
+first and show it to the user. Fixed-price operations submit the exact
+`expectedPriceMillicents` after explicit confirmation. Classification instead
+authorizes the complete effective four-field rate schedule and a per-request
+`maxChargeMillicents`, because its final term-based charge is not known before
+analysis.
 
 The VIP example exports purchase functions but never calls them automatically.
 Do not turn those calls into startup hooks, retries from a queue without user
@@ -264,6 +267,46 @@ the transport rather than replacing delivery.
 - **Advisory mode** reports a diagnostic and allows transport delivery.
 - **Blocking mode** stops the transport when the configured policy rejects the
   message.
+
+Paid classification is disabled unless the policy deliberately sets
+`paidAnalysisConsent: true`; there is no auto-consent default. Read
+`customerGetPricingSettings`, display its effective
+`classificationBaseMillicents`, `includedUniqueTerms`,
+`additionalTermMillicents`, and `maximumClassificationMillicents`, and choose
+an explicit maximum for the request. After approval, pass that unchanged
+snapshot as `priceAuthorization`:
+
+```ts
+const pricing = await client.request("customerGetPricingSettings", {});
+const priceAuthorization = {
+  expectedPricing: {
+    classificationBaseMillicents: pricing.classificationBaseMillicents,
+    includedUniqueTerms: pricing.includedUniqueTerms,
+    additionalTermMillicents: pricing.additionalTermMillicents,
+    maximumClassificationMillicents: pricing.maximumClassificationMillicents,
+  },
+  maxChargeMillicents: operatorApprovedMaximum,
+};
+
+createSendReputePlugin({
+  client,
+  policy: {
+    paidAnalysisConsent: true,
+    mode: "blocking",
+    spamProbabilityThreshold: 0.85,
+    onApiFailure: "block",
+  },
+  priceAuthorization,
+});
+```
+
+The adapter sends this authorization on `POST /v1/classify`; it is not a fixed
+final quote and is never raised automatically. A server `PRICE_CHANGED` response
+always blocks delivery, even when `onApiFailure` is `"allow"`. Review current
+pricing and obtain fresh consent before constructing a new authorization.
+Server-side settlement checks both the effective schedule and maximum before
+debit. Exact completed receipt replays remain free because authorization is not
+part of replay identity, while API-key cumulative spend caps remain independent.
 
 When a message has both plain-text and HTML bodies, or additional Nodemailer
 `alternatives`, every displayed `text/plain` and `text/html` body is bundled

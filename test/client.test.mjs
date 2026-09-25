@@ -136,6 +136,49 @@ test("retries only exact safe operations and statuses", async () => {
   assert.equal(unsafeCalls, 1);
 });
 
+test("AI rewrite quote is an authenticated retry-safe free operation", async () => {
+  let calls = 0;
+  const requests = [];
+  const client = new SendReputeClient({
+    apiKey: "quote-key",
+    baseUrl: "https://api.example.test",
+    maxRetries: 1,
+    fetch: async (url, init) => {
+      calls += 1;
+      requests.push({ url: url.toString(), init });
+      if (calls === 1) {
+        return Response.json({
+          error: { code: "TEMPORARY", message: "wait" },
+          requestId: "quote-request-1",
+        }, { status: 503 });
+      }
+      return Response.json({
+        mode: "single",
+        uniqueTermCount: 1,
+        minimumPerUniqueTermMillicents: 1000,
+        minimumChargeMillicents: 1000,
+        maximumChargeMillicents: 1000,
+        currentBalanceMillicents: 5000,
+        balanceAfterMaximumMillicents: 4000,
+        vipActive: false,
+      });
+    },
+  });
+  const input = {
+    body: { parentRequestId: "parent-1", mode: "single", terms: ["offer"] },
+  };
+  const quote = await client.request("customerQuoteAiRewrite", input);
+  assert.equal(calls, 2);
+  assert.equal(quote.minimumChargeMillicents, 1000);
+  for (const request of requests) {
+    assert.equal(request.url, "https://api.example.test/v1/rewrite/ai-quote");
+    assert.equal(request.init.method, "POST");
+    assert.equal(request.init.headers.authorization, "Bearer quote-key");
+    assert.equal("x-idempotency-key" in request.init.headers, false);
+    assert.deepEqual(JSON.parse(request.init.body), input.body);
+  }
+});
+
 test("a single total deadline bounds fetch, retries, and response body", async () => {
   const client = new SendReputeClient({
     apiKey: "key",
@@ -205,7 +248,52 @@ test("decodes standard and VIP ZIP export bytes without Buffer return types", ()
   assert.throws(() => decodeExportBytes({ archiveBase64: "***" }), /invalid base64/);
 });
 
-test("generated operation metadata is exhaustive", () => {
-  assert.equal(Object.keys(operationMetadata).length, 40);
+test("generated operation metadata is exhaustive and preserves security-sensitive routes", () => {
+  assert.equal(Object.keys(operationMetadata).length, 44);
   assert.deepEqual(operationMetadata.classifyCustomerEmail, { method: "POST", path: "/v1/classify" });
+  assert.deepEqual(operationMetadata.customerQuoteCampaignInsights, {
+    method: "POST",
+    path: "/v1/campaign-insights/quote",
+  });
+  assert.deepEqual(operationMetadata.customerAnalyzeCampaignInsights, {
+    method: "POST",
+    path: "/v1/campaign-insights/analyze",
+  });
+  assert.deepEqual(operationMetadata.customerCreateHostedBuilderHandoff, {
+    method: "POST",
+    path: "/v1/email-builder/hosted-handoffs",
+  });
+  assert.deepEqual(operationMetadata.customerQuoteAiRewrite, {
+    method: "POST",
+    path: "/v1/rewrite/ai-quote",
+  });
+});
+
+test("campaign insights quote and paid analysis send only their explicit bodies without automatic retry", async () => {
+  const calls = [];
+  const client = new SendReputeClient({
+    apiKey: "secret-test-key",
+    baseUrl: "https://api.example.test",
+    fetch: async (url, init) => {
+      calls.push({ path: new URL(url).pathname, body: JSON.parse(init.body), authorization: init.headers.authorization });
+      if (calls.length === 1) return Response.json({
+        priceMillicents: 10000, currency: "USD", vip: false, retentionDays: 30,
+      });
+      return Response.json({ error: { code: "ANALYSIS_FAILED", message: "Try again later" } }, { status: 503 });
+    },
+  });
+  const quote = await client.request("customerQuoteCampaignInsights", { body: {} });
+  assert.equal(quote.priceMillicents, 10000);
+  const body = {
+    analysisId: "opaque-id-12345678",
+    expectedPriceMillicents: quote.priceMillicents,
+    consent: true,
+    metrics: { sent: 100, delivered: 95, deliveryRate: 95 },
+  };
+  await assert.rejects(client.request("customerAnalyzeCampaignInsights", { body }), (error) =>
+    error instanceof SendReputeError && error.code === "ANALYSIS_FAILED" && error.status === 503);
+  assert.deepEqual(calls, [
+    { path: "/v1/campaign-insights/quote", body: {}, authorization: "Bearer secret-test-key" },
+    { path: "/v1/campaign-insights/analyze", body, authorization: "Bearer secret-test-key" },
+  ]);
 });

@@ -15,10 +15,10 @@ const specText = await readFile(specPath, "utf8").catch((error) => {
 });
 if (specText === null) {
   const digest = createHash("sha256").update(await readFile(outputPath)).digest("hex");
-  if (digest !== "d1ec1660a9c4d025b8a5673eb50dd236c9d77f859cd0d677855d441faacca52b") {
-    throw new Error("Frozen v0.1.0 operation contract changed; review and update its checksum before release.");
+  if (digest !== "b215f79c432000732e23b8f537fb2780f4fc738faff3796cd6d946fc3070f6aa") {
+    throw new Error("Frozen v0.1.1 operation contract changed; review and update its checksum before release.");
   }
-  console.log("Verified frozen v0.1.0 customer operation contract.");
+  console.log("Verified frozen v0.1.1 customer operation contract.");
   process.exit(0);
 }
 const spec = JSON.parse(specText);

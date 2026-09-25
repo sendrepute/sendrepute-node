@@ -1,6 +1,6 @@
 {
   "name": "@sendrepute/node",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Typed, server-only Node.js SDK for the SendRepute customer API",
   "type": "module",
   "main": "./dist/index.js",

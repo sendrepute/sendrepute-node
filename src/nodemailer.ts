@@ -1,6 +1,11 @@
-import { SendReputeError, type SendReputeClient } from "./index.js";
+import {
+  SendReputeError,
+  type CustomerClassificationPriceAuthorization,
+  type SendReputeClient,
+} from "./index.js";
 
 export type SendReputeNodemailerPolicy = {
+  paidAnalysisConsent: boolean;
   mode: "advisory" | "blocking";
   spamProbabilityThreshold: number;
   onApiFailure: "allow" | "block";
@@ -32,6 +37,12 @@ export type SendReputeNodemailerDiagnostic =
 export type SendReputeNodemailerOptions = {
   client: Pick<SendReputeClient, "request">;
   policy: SendReputeNodemailerPolicy;
+  /**
+   * Pricing reviewed and approved by the operator. Obtain all four effective
+   * values from customerGetPricingSettings and choose a maximum charge for this
+   * classification request. The adapter never updates this authorization.
+   */
+  priceAuthorization?: CustomerClassificationPriceAuthorization;
   model?: "thor" | "theos" | "athena" | "odin" | "freya" | "hermes" | "ares" | "apollo";
   sender?: string | ((message: Readonly<NodemailerMessageData>) => string);
   signal?: AbortSignal;
@@ -72,6 +83,7 @@ export class SendReputeNodemailerError extends Error {
     | "INVALID_MESSAGE"
     | "UNSUPPORTED_CONTENT"
     | "SPAM_BLOCKED"
+    | "PRICE_CHANGED"
     | "API_FAILURE_BLOCKED";
 
   constructor(
@@ -106,6 +118,7 @@ type DisplayPart = {
 function validateOptions(options: SendReputeNodemailerOptions): void {
   const threshold = options.policy.spamProbabilityThreshold;
   if (
+    options.policy.paidAnalysisConsent !== true ||
     (options.policy.mode !== "advisory" && options.policy.mode !== "blocking") ||
     (options.policy.onApiFailure !== "allow" && options.policy.onApiFailure !== "block") ||
     !Number.isFinite(threshold) ||
@@ -114,8 +127,29 @@ function validateOptions(options: SendReputeNodemailerOptions): void {
   ) {
     throw new SendReputeNodemailerError(
       "INVALID_POLICY",
-      "Nodemailer policy must specify a valid mode, API failure action, and spam threshold from 0 to 1.",
+      "Nodemailer policy must explicitly enable paid analysis consent and specify a valid mode, API failure action, and spam threshold from 0 to 1.",
     );
+  }
+  const authorization = options.priceAuthorization;
+  if (authorization !== undefined) {
+    const pricing = authorization.expectedPricing;
+    const values = pricing && [
+      pricing.classificationBaseMillicents,
+      pricing.includedUniqueTerms,
+      pricing.additionalTermMillicents,
+      pricing.maximumClassificationMillicents,
+      authorization.maxChargeMillicents,
+    ];
+    if (
+      !pricing ||
+      !values ||
+      values.some((value) => !Number.isSafeInteger(value) || value < 0)
+    ) {
+      throw new SendReputeNodemailerError(
+        "INVALID_POLICY",
+        "Nodemailer price authorization must include four non-negative integer rates and a non-negative integer maximum charge.",
+      );
+    }
   }
 }
 
@@ -329,7 +363,13 @@ function combinedBody(parts: DisplayPart[]): string {
 function classificationInput(
   message: NodemailerMessageData,
   options: SendReputeNodemailerOptions,
-): { sender: string; subject: string; body: string; model?: SendReputeNodemailerOptions["model"] } {
+): {
+  sender: string;
+  subject: string;
+  body: string;
+  model?: SendReputeNodemailerOptions["model"];
+  priceAuthorization?: CustomerClassificationPriceAuthorization;
+} {
   if (message.raw !== undefined && message.raw !== null) {
     throw new SendReputeNodemailerError(
       "UNSUPPORTED_CONTENT",
@@ -351,8 +391,20 @@ function classificationInput(
   const subject = requireStringField(message.subject, "subject");
   const body = combinedBody(displayParts(message));
 
-  const input = { sender: sender.trim(), subject, body };
-  return options.model === undefined ? input : { ...input, model: options.model };
+  return {
+    sender: sender.trim(),
+    subject,
+    body,
+    ...(options.model === undefined ? {} : { model: options.model }),
+    ...(options.priceAuthorization === undefined
+      ? {}
+      : {
+          priceAuthorization: {
+            expectedPricing: { ...options.priceAuthorization.expectedPricing },
+            maxChargeMillicents: options.priceAuthorization.maxChargeMillicents,
+          },
+        }),
+  };
 }
 
 function asClassification(value: unknown): Classification {
@@ -431,6 +483,14 @@ async function inspect(
       ),
     );
   } catch (error) {
+    if (error instanceof SendReputeError && error.code === "PRICE_CHANGED") {
+      report(options, apiFailureDiagnostic(error, "blocked"));
+      throw new SendReputeNodemailerError(
+        "PRICE_CHANGED",
+        "Message blocked because SendRepute pricing changed; review current pricing and provide new explicit authorization.",
+        { cause: error },
+      );
+    }
     const blocked = options.policy.onApiFailure === "block";
     report(options, apiFailureDiagnostic(error, blocked ? "blocked" : "allowed"));
     if (blocked) {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2
+
+- Add typed customer AI rewrite quote operation and keep generated API operations current.
+- Require explicit paid-analysis consent for Nodemailer classification, support approved classification price limits, and fail closed when pricing changes.
+- Expand client and adapter regression coverage for the updated contract.
+
 ## 0.1.1
 
 - Classify all displayed in-memory plain-text and HTML Nodemailer bodies and

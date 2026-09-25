@@ -6,14 +6,17 @@ import {
   createSendReputePlugin,
   createSendReputeTransport,
 } from "../dist/nodemailer.js";
+import { SendReputeError } from "../dist/index.js";
 
 const allowPolicy = {
+  paidAnalysisConsent: true,
   mode: "advisory",
   spamProbabilityThreshold: 0.7,
   onApiFailure: "allow",
 };
 
 const blockPolicy = {
+  paidAnalysisConsent: true,
   mode: "blocking",
   spamProbabilityThreshold: 0.7,
   onApiFailure: "allow",
@@ -257,6 +260,7 @@ test("advisory and blocking policies make threshold behavior explicit", async ()
       createSendReputePlugin({
         client,
         policy: {
+          paidAnalysisConsent: true,
           mode: "blocking",
           spamProbabilityThreshold: 0.9,
           onApiFailure: "allow",
@@ -306,6 +310,92 @@ test("API failure policy allows or blocks with content-safe diagnostics", async 
       error instanceof SendReputeNodemailerError &&
       error.code === "API_FAILURE_BLOCKED" &&
       !error.message.includes(secret),
+  );
+});
+
+test("price authorization sends the approved rate schedule and PRICE_CHANGED always blocks delivery", async () => {
+  const calls = [];
+  const diagnostics = [];
+  let sends = 0;
+  const authorization = {
+    expectedPricing: {
+      classificationBaseMillicents: 100,
+      includedUniqueTerms: 3,
+      additionalTermMillicents: 7,
+      maximumClassificationMillicents: 500,
+    },
+    maxChargeMillicents: 425,
+  };
+  const client = {
+    async request(...args) {
+      calls.push(args);
+      throw new SendReputeError({
+        message: "price changed",
+        status: 409,
+        code: "PRICE_CHANGED",
+        requestId: "req-price",
+      });
+    },
+  };
+  const transport = createSendReputeTransport(
+    {
+      send(_mail, callback) {
+        sends += 1;
+        callback(null, { sent: true });
+      },
+    },
+    {
+      client,
+      policy: allowPolicy,
+      priceAuthorization: authorization,
+      onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+    },
+  );
+
+  await assert.rejects(
+    send(transport, {
+      data: {
+        from: "Sender <s@example.test>",
+        subject: "Authorized subject",
+        text: "Authorized body",
+      },
+    }),
+    (error) =>
+      error instanceof SendReputeNodemailerError &&
+      error.code === "PRICE_CHANGED" &&
+      error.cause instanceof SendReputeError,
+  );
+
+  assert.equal(sends, 0);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0][1].body.priceAuthorization, authorization);
+  assert.notEqual(calls[0][1].body.priceAuthorization, authorization);
+  assert.deepEqual(diagnostics, [{
+    kind: "api_failure",
+    action: "blocked",
+    errorName: "SendReputeError",
+    status: 409,
+    code: "PRICE_CHANGED",
+  }]);
+});
+
+test("incomplete price authorization is rejected before classification", () => {
+  assert.throws(
+    () =>
+      createSendReputePlugin({
+        client: { request: async () => response() },
+        policy: allowPolicy,
+        priceAuthorization: {
+          expectedPricing: {
+            classificationBaseMillicents: 100,
+            includedUniqueTerms: 3,
+            additionalTermMillicents: 7,
+          },
+          maxChargeMillicents: 425,
+        },
+      }),
+    (error) =>
+      error instanceof SendReputeNodemailerError && error.code === "INVALID_POLICY",
   );
 });
 
@@ -731,6 +821,15 @@ test("transfer encodings and CSS delimiters cannot reconstruct ignored content",
 });
 
 test("invalid policy is rejected before a message can be sent", () => {
+  assert.throws(
+    () =>
+      createSendReputePlugin({
+        client: { request: async () => response() },
+        policy: { ...allowPolicy, paidAnalysisConsent: false },
+      }),
+    (error) =>
+      error instanceof SendReputeNodemailerError && error.code === "INVALID_POLICY",
+  );
   assert.throws(
     () =>
       createSendReputePlugin({

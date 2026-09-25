@@ -9,7 +9,12 @@ import { createSendReputePlugin, createSendReputeTransport } from "../dist/nodem
 
 const require = createRequire(process.env.SENDREPUTE_MATRIX_MANIFEST || import.meta.url);
 const versions = ["nodemailer-6", "nodemailer-7", "nodemailer-8", "nodemailer-9", "nodemailer"];
-const policy = { mode: "blocking", spamProbabilityThreshold: 0.7, onApiFailure: "block" };
+const policy = {
+  paidAnalysisConsent: true,
+  mode: "blocking",
+  spamProbabilityThreshold: 0.7,
+  onApiFailure: "block",
+};
 const attachment = Buffer.from([0, 255, 128, 10, 13, 42]);
 
 // This file runs in its own node:test process. Fail, rather than silently mock,

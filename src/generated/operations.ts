@@ -37,6 +37,28 @@ export type AiRewriteCharge = {
   refundMillicents: number;
 };
 
+export type AiRewritePriceAuthorization = {
+  expectedMinimumPerUniqueTermMillicents: number;
+  maximumChargeMillicents: number;
+};
+
+export type AiRewriteQuote = {
+  mode: "single" | "all";
+  uniqueTermCount: number;
+  minimumPerUniqueTermMillicents: number;
+  minimumChargeMillicents: number;
+  maximumChargeMillicents: number;
+  currentBalanceMillicents: number;
+  balanceAfterMaximumMillicents: number;
+  vipActive: boolean;
+};
+
+export type AiRewriteQuoteInput = {
+  parentRequestId: string;
+  mode: "single" | "all";
+  terms: Array<string>;
+};
+
 export type AiRewriteResult = {
   requestId: string;
   parentRequestId: string;
@@ -151,6 +173,7 @@ export type CustomerAiRewriteInput = {
   parentRequestId: string;
   mode: "single" | "all";
   terms: Array<string>;
+  priceAuthorization?: AiRewritePriceAuthorization;
 };
 
 export type CustomerApiBilling = {
@@ -205,12 +228,80 @@ export type CustomerBuilderWarning = {
   sourceUrl?: string;
 };
 
+export type CustomerCampaignInsightsAnalysis = {
+  analysisId: string;
+  priceMillicents: 10000 | 5000;
+  result: CustomerCampaignInsightsResult;
+  expiresAt: string;
+};
+
+export type CustomerCampaignInsightsAnalyzeInput = {
+  analysisId: string;
+  expectedPriceMillicents: 10000 | 5000;
+  consent: true;
+  locale?: "en" | "ru" | "uk" | "hi" | "de" | "fr" | "es" | "it" | "pt" | "ar" | "id" | "tr" | "zh" | "vi";
+  metrics: CustomerCampaignInsightsMetrics;
+};
+
+export type CustomerCampaignInsightsMetrics = {
+  sent?: number;
+  delivered?: number;
+  bounced?: number;
+  hardBounced?: number;
+  softBounced?: number;
+  deferred?: number;
+  failed?: number;
+  opened?: number;
+  uniqueOpened?: number;
+  clicked?: number;
+  uniqueClicked?: number;
+  unsubscribed?: number;
+  complaints?: number;
+  accepted?: number;
+  pending?: number;
+  deliveryRate?: number;
+  openRate?: number;
+  clickRate?: number;
+  bounceRate?: number;
+  unsubscribeRate?: number;
+  complaintRate?: number;
+};
+
+export type CustomerCampaignInsightsQuote = {
+  priceMillicents: 10000 | 5000;
+  currency: "USD";
+  vip: boolean;
+  retentionDays: 30;
+};
+
+export type CustomerCampaignInsightsQuoteInput = Record<string, unknown>;
+
+export type CustomerCampaignInsightsResult = {
+  summary: string;
+  findings: Array<string>;
+  recommendations: Array<string>;
+  limitations: Array<string>;
+};
+
+export type CustomerClassificationExpectedPricing = {
+  classificationBaseMillicents: number;
+  includedUniqueTerms: number;
+  additionalTermMillicents: number;
+  maximumClassificationMillicents: number;
+};
+
 export type CustomerClassificationInput = {
   sender: string;
   subject: string;
   body: string;
   displayedAlternatives?: Array<CustomerDisplayedAlternative>;
   model?: CustomerModelFamily;
+  priceAuthorization?: CustomerClassificationPriceAuthorization;
+};
+
+export type CustomerClassificationPriceAuthorization = {
+  expectedPricing: CustomerClassificationExpectedPricing;
+  maxChargeMillicents: number;
 };
 
 export type CustomerClassificationResponse = {
@@ -242,6 +333,21 @@ export type CustomerEmailBuilderAccessInput = {
   designId: string;
   sourceKind: "curated" | "saved" | "blank";
   templateId?: string;
+};
+
+export type CustomerHostedBuilderHandoff = {
+  launchUrl: string;
+  state: string;
+  expiresAt: string;
+};
+
+export type CustomerHostedBuilderHandoffInput = {
+  state: string;
+  returnOrigin: string;
+  initialMjml?: string;
+  mode?: "standard" | "vip";
+  vipAccessId?: string;
+  initialDocument?: CustomerNativeDocument;
 };
 
 export type CustomerManualEditInput = {
@@ -815,6 +921,10 @@ export interface OperationMap {
     input: { body: CustomerEmailBuilderAccessInput; };
     response: EmailBuilderAccess;
   };
+  customerAnalyzeCampaignInsights: {
+    input: { body: CustomerCampaignInsightsAnalyzeInput; };
+    response: CustomerCampaignInsightsAnalysis;
+  };
   customerClassifyEmail: {
     input: { body: CustomerManualEditInput; };
     response: CustomerManualEditResult;
@@ -826,6 +936,10 @@ export interface OperationMap {
   customerCreateAiEmailTemplate: {
     input: { body: CustomerAiEmailTemplateInput; };
     response: AiEmailTemplateResult;
+  };
+  customerCreateHostedBuilderHandoff: {
+    input: { body: CustomerHostedBuilderHandoffInput; };
+    response: CustomerHostedBuilderHandoff;
   };
   customerCreatePaymentInvoice: {
     input: { body: InvoiceInput; };
@@ -927,6 +1041,14 @@ export interface OperationMap {
     input: { body: CustomerVipPurchaseInput; };
     response: VipPurchaseResult;
   };
+  customerQuoteAiRewrite: {
+    input: { body: AiRewriteQuoteInput; };
+    response: AiRewriteQuote;
+  };
+  customerQuoteCampaignInsights: {
+    input: { body: CustomerCampaignInsightsQuoteInput; };
+    response: CustomerCampaignInsightsQuote;
+  };
   customerQuoteClassificationEdit: {
     input: { body: EditQuoteInput; };
     response: EditQuote;
@@ -979,9 +1101,11 @@ export const operationMetadata: Readonly<Record<OperationId, {
 }>> = {
   classifyCustomerEmail: { method: "POST", path: "/v1/classify" },
   customerAccessEmailBuilder: { method: "POST", path: "/v1/email-builder/access" },
+  customerAnalyzeCampaignInsights: { method: "POST", path: "/v1/campaign-insights/analyze" },
   customerClassifyEmail: { method: "POST", path: "/v1/classify/edit" },
   customerCloseEmailBuilderAccess: { method: "DELETE", path: "/v1/email-builder/access/{accessId}" },
   customerCreateAiEmailTemplate: { method: "POST", path: "/v1/email-builder/ai-template" },
+  customerCreateHostedBuilderHandoff: { method: "POST", path: "/v1/email-builder/hosted-handoffs" },
   customerCreatePaymentInvoice: { method: "POST", path: "/v1/payments/invoices" },
   customerCreateVipEmailBuilderAccess: { method: "POST", path: "/v1/vip/email-builder/access" },
   customerCreateVipEmailTemplate: { method: "POST", path: "/v1/vip/email-template" },
@@ -1007,6 +1131,8 @@ export const operationMetadata: Readonly<Record<OperationId, {
   customerNativeBuilderImport: { method: "POST", path: "/v1/vip/email-builder/import" },
   customerNativeBuilderValidate: { method: "POST", path: "/v1/vip/email-builder/validate" },
   customerPurchaseVip: { method: "POST", path: "/v1/vip/purchase" },
+  customerQuoteAiRewrite: { method: "POST", path: "/v1/rewrite/ai-quote" },
+  customerQuoteCampaignInsights: { method: "POST", path: "/v1/campaign-insights/quote" },
   customerQuoteClassificationEdit: { method: "POST", path: "/v1/rewrite/quote" },
   customerQuoteManualClassificationEdit: { method: "POST", path: "/v1/classify/edit/quote" },
   customerRefreshMyPayments: { method: "POST", path: "/v1/payments/refresh" },

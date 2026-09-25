@@ -36,6 +36,7 @@ const RETRY_SAFE_OPERATIONS: ReadonlySet<OperationId> = new Set([
   "getCustomerApiModels",
   "getCustomerApiUsage",
   "classifyCustomerEmail",
+  "customerQuoteAiRewrite",
   "customerGetAccount",
   "customerGetAccountReferrals",
   "customerGetCreditLedger",
