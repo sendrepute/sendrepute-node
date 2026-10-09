@@ -202,6 +202,23 @@ test("a single total deadline bounds fetch, retries, and response body", async (
   );
 });
 
+test("explicit rewrite-length deadline fits within the SDK limit without changing the default", async () => {
+  const base = { apiKey: "test-only", baseUrl: "https://api.example.test" };
+  assert.throws(() => new SendReputeClient({ ...base, timeoutMs: 600_001 }), /600000/);
+  const client = new SendReputeClient({
+    ...base,
+    timeoutMs: 540_000,
+    maxRetries: 0,
+    fetch: async () => Response.json({ requestId: "rewrite-result" }),
+  });
+  assert.equal((await client.request("customerRewriteFlaggedTermsWithAi", {
+    body: {
+      parentRequestId: "abcdefghijklmnop", mode: "all", terms: ["offer"],
+      priceAuthorization: { expectedMinimumPerUniqueTermMillicents: 1000, maximumChargeMillicents: 9000 },
+    },
+  })).requestId, "rewrite-result");
+});
+
 test("deadline cancels a stalled response body", async (t) => {
   // AbortSignal.timeout is unreferenced. This synthetic stream has no socket to
   // keep older Node test runners alive until the deadline fires.
@@ -249,7 +266,10 @@ test("decodes standard and VIP ZIP export bytes without Buffer return types", ()
 });
 
 test("generated operation metadata is exhaustive and preserves security-sensitive routes", () => {
-  assert.equal(Object.keys(operationMetadata).length, 44);
+  assert.equal(Object.keys(operationMetadata).length, 49);
+  assert.deepEqual(operationMetadata.customerGetPaidResult, {method:"GET",path:"/customer/paid-results/{recoveryId}"});
+  assert.deepEqual(operationMetadata.customerPaidResultIdentity, {method:"GET",path:"/customer/paid-results/identity"});
+  assert.deepEqual(operationMetadata.customerResolvePaidResult, {method:"POST",path:"/customer/paid-results/{recoveryId}/resolve"});
   assert.deepEqual(operationMetadata.classifyCustomerEmail, { method: "POST", path: "/v1/classify" });
   assert.deepEqual(operationMetadata.customerQuoteCampaignInsights, {
     method: "POST",
@@ -267,6 +287,28 @@ test("generated operation metadata is exhaustive and preserves security-sensitiv
     method: "POST",
     path: "/v1/rewrite/ai-quote",
   });
+});
+
+test("paid resolution sends explicit authorization and reason without automatic retries", async () => {
+  const calls = [];
+  const client = new SendReputeClient({
+    apiKey: "resolution-test-key",
+    baseUrl: "https://api.example.test",
+    maxRetries: 2,
+    fetch: async (url, init) => {
+      calls.push({path:new URL(url).pathname,authorization:init.headers.authorization,body:JSON.parse(init.body)});
+      return Response.json({error:{code:"TEMPORARY",message:"Unresolved"}},{status:503});
+    },
+  });
+  await assert.rejects(client.request("customerResolvePaidResult", {
+    path:{recoveryId:"purchase-reference"},
+    body:{action:"resolve",reason:"Explicit cancellation"},
+  }), error => error.status === 503);
+  assert.deepEqual(calls,[{
+    path:"/customer/paid-results/purchase-reference/resolve",
+    authorization:"Bearer resolution-test-key",
+    body:{action:"resolve",reason:"Explicit cancellation"},
+  }]);
 });
 
 test("campaign insights quote and paid analysis send only their explicit bodies without automatic retry", async () => {

@@ -32,4 +32,9 @@ test("SDK campaign insights operations retain bearer authentication and ai:gener
   assert.equal(input.properties.consent.const, true);
   assert.equal(input.additionalProperties, false);
   assert.equal(spec.components.schemas.CustomerCampaignInsightsQuote.properties.retentionDays.const, 30);
+  // The membership bit controls eligibility, not a local half-price formula.
+  // Historical amounts remain on the wire for exact receipt replay.
+  assert.deepEqual(spec.components.schemas.CustomerCampaignInsightsQuote.properties.priceMillicents.enum, [10000, 5000]);
+  assert.match(spec.components.schemas.CustomerCampaignInsightsQuote.properties.vip.description, /does not imply a usage discount/);
+  assert.match(operationMetadata.customerQuoteCampaignInsights.path, /\/quote$/);
 });

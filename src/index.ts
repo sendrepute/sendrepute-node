@@ -24,7 +24,9 @@ if (
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_RETRIES = 2;
-const MAX_TIMEOUT_MS = 300_000;
+// Rewrite All can run paced batches and bounded repair rounds for up to eight
+// minutes. Callers still opt in to a longer timeout; the default stays 30s.
+const MAX_TIMEOUT_MS = 600_000;
 const MAX_RETRIES = 10;
 const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 const MAX_RETRY_DELAY_MS = 30_000;
@@ -164,7 +166,10 @@ function retryAfterMs(response: Response, body: unknown): number | undefined {
   if (milliseconds === undefined && typeof bodySeconds === "number" && bodySeconds >= 0) {
     milliseconds = bodySeconds * 1000;
   }
-  return milliseconds === undefined ? undefined : Math.min(milliseconds, MAX_RETRY_DELAY_MS);
+  // Retry-After is a server admission deadline, not exponential-backoff jitter.
+  // Preserve it even when the caller disables retries (e.g. a bridge exposing
+  // the deadline to the UI). The generic backoff cap applies only without it.
+  return milliseconds;
 }
 
 async function boundedBody(response: Response, signal: AbortSignal): Promise<string> {

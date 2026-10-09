@@ -65,6 +65,7 @@ export type AiRewriteResult = {
   mode: "single" | "all";
   input: RewrittenClassificationInput;
   classification: ClassificationResult;
+  classificationExactInput?: boolean;
   replacements: Array<AiReplacement>;
   charge: AiRewriteCharge;
   balanceAfterMillicents: number;
@@ -102,6 +103,8 @@ export type ClassificationReason = {
 };
 
 export type ClassificationResult = {
+  isGuest?: boolean;
+  guestResetsAt?: string;
   label: "inbox" | "spam";
   spamProbability: number;
   flaggedTermCount?: number;
@@ -157,7 +160,7 @@ export type CreditLedgerEntry = {
   balanceCents: number;
   amountMillicents: number;
   balanceMillicents: number;
-  type: "classification" | "domain_ip_scan" | "ai_template" | "email_template_access" | "adjustment" | "bitcoin_deposit" | "bitcoin_reorg_reversal" | "usdt_deposit" | "usdt_reorg_reversal" | "deposit_bonus" | "deposit_bonus_reversal" | "referral_bonus" | "referral_bonus_reversal";
+  type: "classification" | "domain_ip_scan" | "ai_template" | "email_template_access" | "vip_purchase" | "vip_builder" | "vip_native_ai_reserve" | "vip_native_ai_refund" | "campaign_insight" | "campaign_insight_refund" | "adjustment" | "bitcoin_deposit" | "bitcoin_reorg_reversal" | "usdt_deposit" | "usdt_reorg_reversal" | "deposit_bonus" | "deposit_bonus_reversal" | "referral_bonus" | "referral_bonus_reversal";
   description?: unknown;
   createdAt: string;
 };
@@ -167,6 +170,7 @@ export type CustomerAiEmailTemplateInput = {
   content?: string;
   category?: "newsletter" | "transactional" | "personal" | "business" | "custom";
   subtype?: "weekly-digest" | "product-update" | "promotion" | "event-invitation" | "order-confirmation" | "shipping-update" | "payment-receipt" | "password-reset" | "account-alert" | "invitation" | "thank-you" | "congratulations" | "personal-update" | "introduction" | "announcement" | "follow-up" | "meeting-invitation" | "custom";
+  recoveryId?: string;
 };
 
 export type CustomerAiRewriteInput = {
@@ -360,6 +364,8 @@ export type CustomerManualEditInput = {
 };
 
 export type CustomerManualEditResult = {
+  isGuest?: boolean;
+  guestResetsAt?: string;
   label: "inbox" | "spam";
   spamProbability: number;
   flaggedTermCount?: number;
@@ -635,6 +641,7 @@ export type CustomerStandardTemplateCatalog = {
 export type CustomerStandardTemplateDetail = {
   templateId: string;
   template: CustomerStandardTemplateRecipe;
+  mjml?: string;
   storage: "stateless";
 };
 
@@ -666,12 +673,14 @@ export type CustomerVipBuilderAccessInput = {
   sourceKind: "template" | "blank";
   templateId?: string;
   expectedPriceMillicents: number;
+  recoveryId?: string;
 };
 
 export type CustomerVipEmailTemplateInput = {
   prompt: string;
   expectedPriceMillicents: number;
   imageUrls?: Array<string>;
+  recoveryId?: string;
 };
 
 export type CustomerVipEmailTemplateResult = {
@@ -699,6 +708,7 @@ export type CustomerVipTemplateCatalog = {
 export type CustomerVipTemplateDocument = {
   templateId: string;
   document: CustomerNativeDocument;
+  previewHtml?: string;
   storage: "stateless";
 };
 
@@ -961,6 +971,19 @@ export interface OperationMap {
     input: { path: { accessId: string; }; };
     response: undefined;
   };
+  customerFinalizeAiRewrite: {
+    input: { body: {
+  requestId: string;
+  sender: string;
+  subject: string;
+  body: string;
+}; };
+    response: {
+  requestId: string;
+  input: RewrittenClassificationInput;
+  classification: ClassificationResult;
+};
+  };
   customerGetAccount: {
     input: Record<string, never>;
     response: Account;
@@ -973,6 +996,10 @@ export interface OperationMap {
     input: Record<string, never>;
     response: DepositBonusOffer | null;
   };
+  customerGetAiRewriteResult: {
+    input: { path: { requestId: string; }; };
+    response: AiRewriteResult;
+  };
   customerGetCreditLedger: {
     input: { query?: { kind?: "usage" | "payments"; limit?: number; offset?: number; }; };
     response: Array<CreditLedgerEntry>;
@@ -980,6 +1007,29 @@ export interface OperationMap {
   customerGetEmailBuilderAccess: {
     input: { query?: { designId?: string; }; path: { accessId: string; }; };
     response: EmailBuilderActiveAccess;
+  };
+  customerGetPaidResult: {
+    input: { path: { recoveryId: string; }; };
+    response: {
+  status: "pending" | "succeeded" | "failed";
+  operation: "customerStandardAiGenerate" | "customerVipAiGenerate" | "customerVipBuilderAccess";
+  settlement: {
+  kind: "paid_result" | "no_charge" | "confirmed_refund" | "unresolved";
+  accountId: string;
+  credentialId: string | null;
+  recoveryId: string;
+  receiptId: string;
+  chargeMillicents?: number;
+  refundMillicents?: number;
+  deletedAt?: string;
+};
+  result?: {
+  [key: string]: unknown;
+};
+  error?: {
+  [key: string]: unknown;
+};
+};
   };
   customerGetPricingSettings: {
     input: Record<string, never>;
@@ -1037,6 +1087,13 @@ export interface OperationMap {
     input: { body: CustomerNativeBuilderInput; };
     response: CustomerNativeBuilderValidateResult;
   };
+  customerPaidResultIdentity: {
+    input: Record<string, never>;
+    response: {
+  accountId: string;
+  credentialId: string;
+};
+  };
   customerPurchaseVip: {
     input: { body: CustomerVipPurchaseInput; };
     response: VipPurchaseResult;
@@ -1060,6 +1117,32 @@ export interface OperationMap {
   customerRefreshMyPayments: {
     input: Record<string, never>;
     response: Array<BitcoinInvoice>;
+  };
+  customerResolvePaidResult: {
+    input: { body: {
+  action: "resolve";
+  reason: string;
+}; path: { recoveryId: string; }; };
+    response: {
+  status: "pending" | "succeeded" | "failed";
+  operation: "customerStandardAiGenerate" | "customerVipAiGenerate" | "customerVipBuilderAccess";
+  settlement: {
+  kind: "paid_result" | "no_charge" | "confirmed_refund" | "unresolved";
+  accountId: string;
+  credentialId: string | null;
+  recoveryId: string;
+  receiptId: string;
+  chargeMillicents?: number;
+  refundMillicents?: number;
+  deletedAt?: string;
+};
+  result?: {
+  [key: string]: unknown;
+};
+  error?: {
+  [key: string]: unknown;
+};
+};
   };
   customerRewriteFlaggedTermsWithAi: {
     input: { body: CustomerAiRewriteInput; };
@@ -1111,11 +1194,14 @@ export const operationMetadata: Readonly<Record<OperationId, {
   customerCreateVipEmailTemplate: { method: "POST", path: "/v1/vip/email-template" },
   customerDeletePaymentInvoice: { method: "DELETE", path: "/v1/payments/invoices/{invoiceId}" },
   customerDeleteVipEmailBuilderAccess: { method: "DELETE", path: "/v1/vip/email-builder/access/{accessId}" },
+  customerFinalizeAiRewrite: { method: "POST", path: "/v1/rewrite/finalize" },
   customerGetAccount: { method: "GET", path: "/v1/account" },
   customerGetAccountReferrals: { method: "GET", path: "/v1/account/referrals" },
   customerGetActiveDepositOffer: { method: "GET", path: "/v1/payments/deposit-offer" },
+  customerGetAiRewriteResult: { method: "GET", path: "/v1/rewrite/result/{requestId}" },
   customerGetCreditLedger: { method: "GET", path: "/v1/account/ledger" },
   customerGetEmailBuilderAccess: { method: "GET", path: "/v1/email-builder/access/{accessId}" },
+  customerGetPaidResult: { method: "GET", path: "/customer/paid-results/{recoveryId}" },
   customerGetPricingSettings: { method: "GET", path: "/v1/pricing" },
   customerGetStandardBuilderTemplate: { method: "GET", path: "/v1/email-builder/templates/{templateId}" },
   customerGetVip: { method: "GET", path: "/v1/vip" },
@@ -1130,12 +1216,14 @@ export const operationMetadata: Readonly<Record<OperationId, {
   customerNativeBuilderExport: { method: "POST", path: "/v1/vip/email-builder/export" },
   customerNativeBuilderImport: { method: "POST", path: "/v1/vip/email-builder/import" },
   customerNativeBuilderValidate: { method: "POST", path: "/v1/vip/email-builder/validate" },
+  customerPaidResultIdentity: { method: "GET", path: "/customer/paid-results/identity" },
   customerPurchaseVip: { method: "POST", path: "/v1/vip/purchase" },
   customerQuoteAiRewrite: { method: "POST", path: "/v1/rewrite/ai-quote" },
   customerQuoteCampaignInsights: { method: "POST", path: "/v1/campaign-insights/quote" },
   customerQuoteClassificationEdit: { method: "POST", path: "/v1/rewrite/quote" },
   customerQuoteManualClassificationEdit: { method: "POST", path: "/v1/classify/edit/quote" },
   customerRefreshMyPayments: { method: "POST", path: "/v1/payments/refresh" },
+  customerResolvePaidResult: { method: "POST", path: "/customer/paid-results/{recoveryId}/resolve" },
   customerRewriteFlaggedTermsWithAi: { method: "POST", path: "/v1/rewrite" },
   customerStandardBuilderCompile: { method: "POST", path: "/v1/email-builder/compile" },
   customerStandardBuilderExport: { method: "POST", path: "/v1/email-builder/export" },
